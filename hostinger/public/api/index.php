@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/download_names.php';
 ini_set('display_errors','0');
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
@@ -189,7 +190,7 @@ try{
   if(preg_match('#^scenes/([a-f0-9]{20})/(background\.jpg|\d+\.png)$#D',$action,$a))fileResponse(dirFor($pid).'/scenes/'.$a[1].'/'.$a[2],str_ends_with($a[2],'.png')?'image/png':'image/jpeg');
   if($action==='export'&&$method==='POST'){$e=body();validateEdit($e,$p,true);if(!in_array($e['quality']??'final',['final','preview'],true))fail('Çıktı kalitesi geçersiz.',422);reply(enqueue($pid,'export',$e));}
   if($action==='exports'){$r=q("SELECT id,result FROM reels_jobs WHERE project_id=? AND kind='export' AND status='completed' ORDER BY created_at DESC",[$pid])->fetchAll();reply(array_map(fn($x)=>['id'=>$x['id'],...json_decode($x['result'],true)],$r));}
-  if(preg_match('#^exports/([a-f0-9]{32})/(video\.mp4|timing\.json|subtitles\.srt)$#D',$action,$a)){ $j=getJob($a[1]);if($j['project_id']!==$pid||$j['status']!=='completed')fail('Çıktı hazır değil.',404);fileResponse(dirFor($pid).'/exports/'.$a[1].'/'.$a[2],match($a[2]){'video.mp4'=>'video/mp4','timing.json'=>'application/json',default=>'application/x-subrip'},$a[2]); }
+  if(preg_match('#^exports/([a-f0-9]{32})/(video\.mp4|timing\.json|subtitles\.srt)$#D',$action,$a)){ $j=getJob($a[1]);if($j['project_id']!==$pid||$j['status']!=='completed')fail('Çıktı hazır değil.',404);fileResponse(dirFor($pid).'/exports/'.$a[1].'/'.$a[2],match($a[2]){'video.mp4'=>'video/mp4','timing.json'=>'application/json',default=>'application/x-subrip'},downloadName((json_decode($j['payload'],true)['name']??$p['name']),(int)$j['created_at'],$a[1],$a[2])); }
  }
  if(preg_match('#^/jobs/([a-f0-9]{32})(/cancel)?$#D',$path,$m)){$r=getJob($m[1]);if(isset($m[2])&&$method==='POST'){q("UPDATE reels_jobs SET cancelled=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END WHERE id=?",[$m[1]]);reply(['ok'=>true]);}reply(jobRecord($r));}
  fail('Uç nokta bulunamadı.',404);

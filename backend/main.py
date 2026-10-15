@@ -12,6 +12,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from . import audio, alignment, render
+from .downloads import download_name
 from .models import AlignmentRequest, Edit, ExportRequest, Style
 from .text import clean_text, split_poem, srt
 
@@ -243,7 +244,9 @@ def download(pid: str, jid: str, filename: str):
     path = folder(pid)/'exports'/jid/filename
     if not path.exists():
         raise HTTPException(404)
-    return FileResponse(path, filename=filename)
+    snapshot = json.loads((path.parent/'timing.json').read_text())
+    name = download_name(snapshot.get('name', 'reels'), (path.parent/'video.mp4').stat().st_mtime, jid, filename)
+    return FileResponse(path, filename=name)
 
 
 @app.get('/api/projects/{pid}/jobs')
