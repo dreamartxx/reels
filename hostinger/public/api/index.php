@@ -74,6 +74,7 @@ function validateEdit(array $e,array $p,bool $needSentences=false): array{
 function fileResponse(string $path,string $type,?string $download=null): never{
  if(!is_file($path))fail('Dosya bulunamadı.',404);
  if(session_status()===PHP_SESSION_ACTIVE)session_write_close();
+ global $db;$db=null; // Release the connection before streaming media.
  header('Content-Type: '.$type);header('Accept-Ranges: bytes');
  if($download)header('Content-Disposition: attachment; filename="'.$download.'"');
  $size=filesize($path);$start=0;$end=$size-1;

@@ -12,7 +12,14 @@ export function Preview({project,style,time,guides,onError}:{project:Project|nul
   if(!project?.sentences.length){setAssets(null);return}
   let alive=true;
   const controller=new AbortController();
-  const load=(url:string)=>new Promise<HTMLImageElement>((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=()=>reject(Error('Önizleme görseli yüklenemedi.'));im.src=url});
+  const load=async(url:string):Promise<HTMLImageElement>=>{
+   for(let attempt=0;attempt<3;attempt++){
+    if(!alive)throw Error('İptal edildi.');
+    try{return await new Promise<HTMLImageElement>((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=()=>reject(Error('Önizleme görseli yüklenemedi.'));im.src=url+(attempt?'?retry='+attempt:'')});}
+    catch(e){if(attempt===2)throw e;await new Promise(resolve=>setTimeout(resolve,500*(attempt+1)));}
+   }
+   throw Error('Önizleme görseli yüklenemedi.');
+  };
   setLoading(true);
   const timer=setTimeout(async()=>{
    try{let response=await api<Scene|{pending:true;job:string}>(`/projects/${project.id}/scene`,{method:'POST',body:JSON.stringify(editBody(project)),signal:controller.signal});
@@ -29,7 +36,11 @@ export function Preview({project,style,time,guides,onError}:{project:Project|nul
     if(!alive||'pending' in response)return;
     const scene=response;
     const prefix=`/api/projects/${project.id}/scenes/${scene.digest}/`;
-    const [bg,...images]=await Promise.all([load(prefix+'background.jpg'),...scene.sprites.map(s=>load(prefix+s.file))]);
+    // Bound parallel protected media requests on shared hosting.
+    const urls=[prefix+'background.jpg',...scene.sprites.map(s=>prefix+s.file)];
+    const loaded:HTMLImageElement[]=[];
+    for(let i=0;i<urls.length;i+=3){if(!alive)return;loaded.push(...await Promise.all(urls.slice(i,i+3).map(load)));}
+    const [bg,...images]=loaded;
     if(alive){setAssets({scene,images,bg,pid:project.id});setLoading(false)}
    }catch(e){if(alive){setLoading(false);onError((e as Error).message)}}
   },250);
