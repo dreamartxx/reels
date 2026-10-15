@@ -1,0 +1,10 @@
+import {ReactNode,useEffect,useState} from 'react';
+import {AudioLines,LockKeyhole,Loader2,LogOut} from 'lucide-react';
+import {api} from './types';
+export function AuthGate({children}:{children:ReactNode}){
+ const [state,setState]=useState<{mode?:string;authenticated?:boolean}|null>(null),[password,setPassword]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+ useEffect(()=>{api<typeof state>('/health').then(setState).catch(e=>setError(e.message));const expired=()=>setState({mode:'cloud',authenticated:false});window.addEventListener('reels-auth-required',expired);return()=>window.removeEventListener('reels-auth-required',expired)},[]);
+ async function login(e:React.FormEvent){e.preventDefault();setBusy(true);setError('');try{await api('/auth/login',{method:'POST',body:JSON.stringify({password})});setPassword('');setState({mode:'cloud',authenticated:true})}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
+ if(!state||state.mode==='cloud'&&!state.authenticated)return <main className="login-page"><form className="login-card" onSubmit={login}><span className="brand-icon"><AudioLines size={27}/></span><span className="eyebrow">REELS TYPOGRAPHY STUDIO</span><h1>Kelimelerinize<br/>yeniden alan açın.</h1><p>Özel stüdyonuza giriş yapın. Projeleriniz ve ses dosyalarınız yalnızca size açıktır.</p>{state&&<><label htmlFor="studio-password">Stüdyo parolası</label><input id="studio-password" type="password" autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)}/><button className="primary wide" disabled={busy}>{busy?<Loader2 className="spin" size={16}/>:<LockKeyhole size={16}/>}Stüdyoyu aç</button></>}{!state&&!error&&<Loader2 className="spin" size={20}/>}<p className="warning" role="alert">{error}</p><small>HOSTINGER MYSQL · YEREL VİDEO MOTORU</small></form></main>;
+ return <>{state.mode==='cloud'&&<button className="logout" title="Oturumu kapat" onClick={async()=>{await api('/auth/logout',{method:'POST'});setState({mode:'cloud',authenticated:false})}}><LogOut size={13}/>Çıkış</button>}{children}</>;
+}
