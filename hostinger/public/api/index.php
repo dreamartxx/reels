@@ -12,8 +12,12 @@ function uid(): string{return bin2hex(random_bytes(16));}
 $configPath=getenv('REELS_CONFIG')?:dirname(__DIR__,2).'/reels-private/config.php';
 if(!is_file($configPath))fail('Site yapılandırması henüz tamamlanmadı.',503);
 $config=require $configPath;
-try{$db=new PDO($config['dsn'],$config['db_user']??null,$config['db_password']??null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);}
-catch(Throwable $e){error_log('Reels DB connection failed');fail('Veritabanına bağlanılamadı.',503);}
+$db=null;
+for($attempt=0;$attempt<3;$attempt++){
+ try{$db=new PDO($config['dsn'],$config['db_user']??null,$config['db_password']??null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,PDO::ATTR_TIMEOUT=>5]);break;}
+ catch(Throwable $e){if($attempt<2)usleep(150000*($attempt+1));else error_log('Reels DB connection failed: '.$e->getCode());}
+}
+if(!$db)fail('Veritabanına bağlanılamadı.',503);
 $storage=$config['storage'];if(!is_dir($storage))mkdir($storage,0700,true);
 if(!is_file($storage.'/schema-v1')){
  try{$db->exec(file_get_contents(dirname($configPath).'/schema.sql'));file_put_contents($storage.'/schema-v1','1');}

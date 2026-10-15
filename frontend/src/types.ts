@@ -12,7 +12,15 @@ export const templates = [
  {id:'typewriter',name:'Typewriter',note:'Her kelimenin bir izi var.',bg:'#1B201E',fg:'#E3E2D6',accent:'#D6AF70',font:'mono',mark:'Aa'},
 ] as const;
 export async function api<T>(url:string, options:RequestInit={}):Promise<T> {
- const res = await fetch('/api'+url, {...options, headers: options.body instanceof FormData ? options.headers : {'Content-Type':'application/json',...options.headers}});
+ const init={...options,headers:options.body instanceof FormData?options.headers:{'Content-Type':'application/json',...options.headers}};
+ let res:Response|undefined;
+ const attempts=(options.method||'GET').toUpperCase()==='GET'?3:1;
+ for(let attempt=0;attempt<attempts;attempt++){
+  try{res=await fetch('/api'+url,init);if(![502,503,504].includes(res.status)||attempt===attempts-1)break;}
+  catch(e){if(attempt===attempts-1||options.signal?.aborted)throw e;}
+  await new Promise(resolve=>setTimeout(resolve,400*(attempt+1)));
+ }
+ if(!res)throw Error('Sunucuya ulaşılamadı.');
  if(res.status===401)window.dispatchEvent(new Event('reels-auth-required'));
  if(!res.ok){let data; try {data=await res.json()}catch{throw Error('Sunucuya ulaşılamadı. Uygulamanın çalıştığını kontrol edin.')}; throw Error(typeof data.detail==='string'?data.detail:Array.isArray(data.detail)?data.detail.map((x:{msg:string})=>x.msg).join(' · '):'İşlem tamamlanamadı.')}
  return res.json();

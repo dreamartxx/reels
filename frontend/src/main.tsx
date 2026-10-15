@@ -34,12 +34,16 @@ function App(){
  },[project,locked,report]);
  useEffect(()=>{
   if(!job||!['running','queued'].includes(job.status))return;
-  let active=true;
-  const timer=setInterval(async()=>{try{const updated=await api<Job>('/jobs/'+job.id);if(!active)return;setJob(updated);
+  let active=true,hadConnectionError=false;let timer:ReturnType<typeof setTimeout>;
+  async function poll(){try{const updated=await api<Job>('/jobs/'+job!.id);if(!active)return;if(hadConnectionError){setError('');hadConnectionError=false;}setJob(updated);
    if(updated.status==='completed'){if(updated.kind==='align'||updated.kind==='ingest'){apply(updated.result as Project);setNotice(updated.kind==='ingest'?'Ses analizi tamamlandı. Şimdi şiiri sesle hizalayabilirsiniz.':'Hizalama tamamlandı. İşaretli kelimeleri dinleyerek kontrol edin.')}else{setFiles((updated.result as {files:Record<string,string>}).files);setNotice('Video ve altyazı dosyalarınız hazır.')}}
    if(['failed','cancelled'].includes(updated.status))setError(updated.message);
-  }catch(e){if(active){setError((e as Error).message);setJob(null)}}},900);
-  return()=>{active=false;clearInterval(timer)};
+   if(['completed','failed','cancelled'].includes(updated.status))return;
+  }catch(e){if(active){hadConnectionError=true;setError((e as Error).message+' Bağlantı yeniden deneniyor; işiniz korunuyor.');}}
+  if(active)timer=setTimeout(poll,hadConnectionError?3000:900);
+  }
+  timer=setTimeout(poll,900);
+  return()=>{active=false;clearTimeout(timer)};
  },[job?.id,job?.status]);
  useEffect(()=>{
   let id=0;function tick(){if(audioRef.current)setTime(audioRef.current.currentTime);id=requestAnimationFrame(tick)}
