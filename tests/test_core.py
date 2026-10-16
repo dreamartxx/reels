@@ -70,3 +70,32 @@ def test_safe_area_for_all_visible_sentences():
                 h=g['max_height']*m['scale'];y=g['y']+m['offset']*g['gap']
                 assert y-h/2>=style['safe_top']
                 assert y+h/2<=1920-style['safe_bottom']
+
+
+def test_letter_dissolve_matches_browser_and_removes_read_sentence():
+    from backend.render import letter_motion
+    samples=[(i,t/20) for i in range(12) for t in range(21)]
+    script='import {letterMotion,motion} from "./frontend/src/motion.ts";console.log(JSON.stringify({letters:'+json.dumps(samples)+'.map(([i,t])=>letterMotion(i,t)),motion:[2.8,3,3.3,4,5.6,5.9,6].map(t=>motion([{start:0},{start:3}],t,.6,6))}));'
+    actual=json.loads(subprocess.check_output(['node','--experimental-strip-types','--input-type=module','-e',script],cwd=ROOT,text=True))
+    assert actual['letters']==[letter_motion(i,t) for i,t in samples]
+    assert actual['motion']==[motion([{'start':0},{'start':3}],t,.6,6) for t in [2.8,3,3.3,4,5.6,5.9,6]]
+    assert all(x['index']!=0 for x in motion([{'start':0},{'start':3}],4,.6,6))
+    assert letter_motion(5,0)['opacity']==1 and letter_motion(5,1)['opacity']==0
+    assert motion([{'start':0},{'start':3}],6,.6,6)==[]
+
+
+@pytest.mark.parametrize('font',['serif','sans','mono'])
+def test_glyph_cells_preserve_all_turkish_pixels(font):
+    import numpy as np
+    from PIL import Image
+    from backend.render import glyph_regions
+    style=Style(font=font,font_size=90).model_dump();geo=geometry(style)
+    text='İyi ki… Çığ, şüphe, gözyaşı; özgürlük ve yarınlarımız. Işıklar sönmesin.'
+    sprite,size=text_sprite(text,style,False,geo)
+    cells=glyph_regions(sprite,text,style,size,geo)
+    restored=Image.new('RGBA',sprite.size)
+    for g in cells:
+        x,y,w,h=(g[k] for k in ('x','y','width','height'))
+        restored.paste(sprite.crop((x,y,x+w,y+h)),(x,y))
+    assert len(cells)>20
+    assert np.array_equal(np.asarray(sprite),np.asarray(restored))

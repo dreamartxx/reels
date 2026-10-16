@@ -1,7 +1,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {Expand,ShieldCheck} from 'lucide-react';
 import {api,editBody,Project,Scene,Style,Job} from './types';
-import {motion} from './motion';
+import {motion,letterMotion} from './motion';
 
 export function Preview({project,style,time,guides,onError}:{project:Project|null;style:Style;time:number;guides:boolean;onError:(s:string)=>void}){
  const canvas=useRef<HTMLCanvasElement>(null);
@@ -55,12 +55,18 @@ export function Preview({project,style,time,guides,onError}:{project:Project|nul
   ctx.fillStyle=style.background;ctx.fillRect(0,0,1080,1920);
   if(assets&&assets.pid===project?.id){
    ctx.drawImage(assets.bg,0,0,1080,1920);
-   for(const item of motion(project.sentences,time,style.transition)){
+   for(const item of motion(project.sentences,time,style.transition,project.audio.duration)){
     const im=assets.images[item.index];if(!im)continue;
     const geo=assets.scene.geometry;
     ctx.globalAlpha=item.opacity;
     const w=im.width*item.scale,h=im.height*item.scale;
-    ctx.drawImage(im,geo.x-w/2,geo.y+item.offset*geo.gap-h/2,w,h);
+    const left=geo.x-w/2,top=geo.y+item.offset*geo.gap-h/2;
+    const glyphs=assets.scene.sprites[item.index].glyphs;
+    if(item.dissolve>0&&glyphs?.length){
+     glyphs.forEach((g,index)=>{const drift=letterMotion(index,item.dissolve);ctx.globalAlpha=item.opacity*drift.opacity;
+      ctx.drawImage(im,g.x,g.y,g.width,g.height,left+g.x*item.scale+drift.x,top+g.y*item.scale+drift.y,g.width*item.scale,g.height*item.scale);
+     });
+    }else ctx.drawImage(im,left,top,w,h);
    }
   }else{
    ctx.textAlign='center';ctx.fillStyle=style.foreground;

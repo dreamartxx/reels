@@ -182,7 +182,7 @@ try{
    $p['sentences']=$sentences;$p['text']=clean($e['text']);$p['alignment']=['engine'=>'manual'];validateEdit($p,$p);reply(saveProject($p));
   }
   if($action==='scene'&&$method==='POST'){
-   $e=validateEdit(body(),$p);$key=substr(hash('sha256',enc(['style'=>$e['style'],'text'=>array_map(fn($s)=>[$s['text'],$s['accent']??false],$e['sentences'])])),0,32);
+   $e=validateEdit(body(),$p);$key=substr(hash('sha256',enc(['version'=>2,'style'=>$e['style'],'text'=>array_map(fn($s)=>[$s['text'],$s['accent']??false],$e['sentences'])])),0,32);
    $cache=dirFor($pid).'/scene-'.$key.'.json';if(is_file($cache))reply(json_decode(file_get_contents($cache),true));
    foreach(q("SELECT * FROM reels_jobs WHERE project_id=? AND kind='scene' AND status IN ('queued','running')",[$pid]) as $j){if((json_decode($j['payload'],true)['request_key']??'')===$key)reply(['pending'=>true,'job'=>$j['id']]);}
    $j=enqueue($pid,'scene',array_merge($e,['request_key'=>$key]));reply(['pending'=>true,'job'=>$j['id']]);

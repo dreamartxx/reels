@@ -3,6 +3,7 @@ import hashlib
 import json
 import math
 import subprocess
+import unicodedata
 from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -12,16 +13,16 @@ ROOT = Path(__file__).resolve().parents[1]
 WIDTH, HEIGHT = 1080, 1920
 
 
-def motion(sentences, t, transition):
+def motion(sentences, t, transition, duration=None):
     """Must stay identical to frontend/src/motion.ts. At most three visible items."""
     if not sentences:
         return []
     i = max(0, next((j-1 for j, s in enumerate(sentences) if s['start'] > t), len(sentences)-1))
     u = 0.
     if i + 1 < len(sentences):
-        duration = min(transition, (sentences[i+1]['start'] - sentences[i]['start']) * .45)
-        if duration > 0:
-            x = max(0., min(1., (t - sentences[i+1]['start'] + duration) / duration))
+        window = min(transition, (sentences[i+1]['start'] - sentences[i]['start']) * .45)
+        if window > 0:
+            x = max(0., min(1., (t - sentences[i+1]['start'] + window) / window))
             u = x*x*(3-2*x)
     values = [
         (i-1, -1-u, .3*max(0., 1-2*u), .72),
@@ -29,7 +30,32 @@ def motion(sentences, t, transition):
         (i+1, 1-u, .22+.78*u, .72+.28*u),
         (i+2, 2-u, .22*max(0., 2*u-1), .72),
     ]
-    return [{'index': j, 'offset': y, 'opacity': a, 'scale': z} for j, y, a, z in values if 0 <= j < len(sentences) and a > .00001]
+    result = []
+    for j, y, a, z in values:
+        if not 0 <= j < len(sentences) or a <= .00001:
+            continue
+        phase = 0.
+        if j == i-1:
+            phase = .55 + .45 * max(0., min(1., (t-sentences[i]['start']) / max(.5, transition)))
+        elif j == i:
+            phase = .55*u
+            if i == len(sentences)-1 and duration is not None:
+                fade = min(max(.8, transition), max(.01, duration-sentences[i]['start']))
+                phase = max(0., min(1., (t-duration+fade)/fade))
+        if phase < 1:
+            result.append({'index': j, 'offset': y, 'opacity': a, 'scale': z, 'dissolve': phase})
+    return result
+
+
+def letter_motion(index, phase):
+    """Deterministic, gentle drift shared with Canvas; no frame-to-frame randomness."""
+    delay = ((index*37+11) % 101)/101*.16
+    p = max(0., min(1., (phase-delay)/(1-delay)))
+    eased = p*p*(3-2*p)
+    return {'x': (((index*73+19) % 101)/100-.5)*140*eased,
+            'y': -(28+((index*43+7) % 83))*eased,
+            'opacity': 1-eased}
+
 
 
 def geometry(style):
@@ -85,6 +111,33 @@ def text_sprite(text, style, accent, geometry):
     return im, size
 
 
+def glyph_regions(sprite, text, style, size, geo):
+    """Partition the original raster into letter cells, keeping accents attached."""
+    font = ImageFont.truetype(str(ROOT/'assets/fonts'/f'{style["font"]}.ttf'), size)
+    lines = wrap(text, font, geo['width']-12)
+    step = math.ceil(size*style['line_height'])
+    regions = []
+    for row, line in enumerate(lines):
+        clusters = []
+        for char in line:
+            if clusters and unicodedata.combining(char): clusters[-1] += char
+            else: clusters.append(char)
+        left = (sprite.width-font.getlength(line))/2
+        prefix = ''
+        y0 = 0 if row == 0 else row*step+6
+        y1 = sprite.height if row == len(lines)-1 else (row+1)*step+6
+        for col, char in enumerate(clusters):
+            x0 = 0 if col == 0 else math.floor(left+font.getlength(prefix))
+            prefix += char
+            x1 = sprite.width if col == len(clusters)-1 else math.floor(left+font.getlength(prefix))
+            if x1 <= x0: continue
+            bbox = sprite.crop((x0,y0,x1,y1)).getbbox()
+            if bbox:
+                x,y,r,b = bbox
+                regions.append({'x':x0+x,'y':y0+y,'width':r-x,'height':b-y})
+    return regions
+
+
 def background(style):
     color = np.array([int(style['background'][i:i+2], 16) for i in (1, 3, 5)], dtype=np.float32)
     y, x = np.mgrid[:HEIGHT, :WIDTH]
@@ -95,7 +148,7 @@ def background(style):
 
 
 def build_scene(folder: Path, sentences, style):
-    signature = json.dumps({'text': [(s['text'], s.get('accent', False)) for s in sentences], 'style': style}, sort_keys=True)
+    signature = json.dumps({'version': 2, 'text': [(s['text'], s.get('accent', False)) for s in sentences], 'style': style}, sort_keys=True)
     digest = hashlib.sha256(signature.encode()).hexdigest()[:20]
     target = folder/'scenes'/digest
     manifest_file = target/'manifest.json'
@@ -108,23 +161,30 @@ def build_scene(folder: Path, sentences, style):
     for i, s in enumerate(sentences):
         sprite, size = text_sprite(s['text'], style, s.get('accent', False), geo)
         sprite.save(target/f'{i}.png')
-        sprites.append({'file': f'{i}.png', 'width': sprite.width, 'height': sprite.height, 'font_size': size})
+        sprites.append({'file': f'{i}.png', 'width': sprite.width, 'height': sprite.height, 'font_size': size, 'glyphs': glyph_regions(sprite, s['text'], style, size, geo)})
     manifest = {'digest': digest, 'width': WIDTH, 'height': HEIGHT, 'geometry': geo, 'sprites': sprites}
     manifest_file.write_text(json.dumps(manifest), encoding='utf-8')
     return manifest
 
 
-def render_frame(bg, sprites, geo, sentences, style, t, scale=1.):
+def render_frame(bg, sprites, geo, sentences, style, t, scale=1., glyphs=None, duration=None):
     frame = bg.copy()
-    for item in motion(sentences, t, style['transition']):
-        sprite = sprites[item['index']]
+    for item in motion(sentences, t, style['transition'], duration):
+        original = sprites[item['index']]
         factor = item['scale']*scale
-        sprite = sprite.resize((max(1, round(sprite.width*factor)), max(1, round(sprite.height*factor))), Image.Resampling.BICUBIC)
-        if item['opacity'] < .9999:
-            sprite.putalpha(sprite.getchannel('A').point(lambda p: round(p*item['opacity'])))
-        x = round(geo['x']*scale-sprite.width/2)
-        y = round((geo['y']+item['offset']*geo['gap'])*scale-sprite.height/2)
-        frame.paste(sprite, (x,y), sprite)
+        left = geo['x']*scale-original.width*factor/2
+        top = (geo['y']+item['offset']*geo['gap'])*scale-original.height*factor/2
+        regions = glyphs[item['index']] if glyphs and item['dissolve'] > 0 else None
+        pieces = regions or [{'x':0,'y':0,'width':original.width,'height':original.height}]
+        for index, box in enumerate(pieces):
+            drift = letter_motion(index, item['dissolve']) if regions else {'x':0,'y':0,'opacity':1}
+            opacity = item['opacity']*drift['opacity']
+            if opacity < .0001: continue
+            x,y,w,h = (box[k] for k in ('x','y','width','height'))
+            sprite = original.crop((x,y,x+w,y+h)).resize((max(1,round(w*factor)),max(1,round(h*factor))),Image.Resampling.BICUBIC)
+            if opacity < .9999:
+                sprite.putalpha(sprite.getchannel('A').point(lambda p:round(p*opacity)))
+            frame.paste(sprite,(round(left+x*factor+drift['x']*scale),round(top+y*factor+drift['y']*scale)),sprite)
     return frame
 
 
@@ -143,7 +203,7 @@ def render_video(folder, audio, sentences, style, duration, output, preview, pro
             for n in range(total):
                 if cancelled():
                     raise RuntimeError('İşlem iptal edildi.')
-                frame = render_frame(bg, sprites, manifest['geometry'], sentences, style, n/fps, scale)
+                frame = render_frame(bg, sprites, manifest['geometry'], sentences, style, n/fps, scale, [s['glyphs'] for s in manifest['sprites']], duration)
                 process.stdin.write(frame.tobytes())
                 if n % 15 == 0:
                     progress(.02+.94*n/total, f'{n}/{total} kare oluşturuldu')
