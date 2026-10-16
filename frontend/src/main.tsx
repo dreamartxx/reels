@@ -88,7 +88,7 @@ function App(){
       {project?<FileAudio size={25}/>:<Upload size={25}/>}<strong>{project?project.audio.filename:'Ses dosyanızı bırakın'}</strong><span>{project?`${timeLabel(project.audio.duration)} · ${(project.audio.sample_rate/1000).toFixed(1)} kHz · ${project.audio.channels===1?'Mono':'Stereo'}`:'veya dosya seçmek için tıklayın'}</span><small>{project?'DEĞİŞTİR →':'MP3 / WAV · EN FAZLA 100 MB'}</small>
      </button>
      {!project&&<button className="demo-link" disabled={locked} onClick={demo}><Play size={12}/> Türkçe örnekle dene <ArrowUpRight size={12}/></button>}
-     <div className="label-row"><label className="field-title" htmlFor="poem">ŞİİR METNİ</label><span>{text.replace(/\[[^\]]*\]/g,'').trim().split(/\s+/).filter(Boolean).length} kelime</span></div>
+     <div className="label-row"><label className="field-title" htmlFor="poem">ŞİİR METNİ</label><div className="poem-actions"><span>{text.replace(/\[[^\]]*\]/g,'').trim().split(/\s+/).filter(Boolean).length} kelime</span><button type="button" className="clear-poem" disabled={locked||!text.length} onClick={()=>updateText('')}><X size={12}/>Temizle</button></div></div>
      <textarea id="poem" value={text} disabled={locked} maxLength={24000} placeholder={'Bir şiirle başlayın…\n\nSeslendirdiğiniz metni buraya yapıştırın.\nHer cümle kendi anını bulsun.'} onChange={e=>updateText(e.target.value)}/>
      <div className="help"><ShieldCheck size={13}/><span>[deep], [pause] gibi etiketler videoda görünmez.</span></div>
      <label className="field-title" htmlFor="split">METNİ BÖL</label><select id="split" disabled={locked} value={mode} onChange={e=>setMode(e.target.value)}><option value="sentences">Cümlelere göre · önerilen</option><option value="lines">Her satır ayrı</option></select>
