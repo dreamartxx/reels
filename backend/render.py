@@ -13,11 +13,19 @@ ROOT = Path(__file__).resolve().parents[1]
 WIDTH, HEIGHT = 1080, 1920
 
 
-def motion(sentences, t, transition, duration=None):
+def motion(sentences, t, transition, duration=None, single=False):
     """Must stay identical to frontend/src/motion.ts. At most three visible items."""
     if not sentences:
         return []
     i = max(0, next((j-1 for j, s in enumerate(sentences) if s['start'] > t), len(sentences)-1))
+    if single:
+        end = sentences[i+1]['start'] if i+1 < len(sentences) else duration
+        if end is None or t >= end: return []
+        start = 0 if i == 0 else sentences[i]['start']
+        fade = min(max(.6, transition), (end-start)*.4)
+        phase = max(0., min(1., (t-end+fade)/max(.01, fade)))
+        opacity = max(0., min(1., (t-start)/min(.3, max(.01, (end-start)*.2))))
+        return [{'index':i, 'offset':0, 'opacity':opacity, 'scale':1, 'dissolve':phase}]
     u = 0.
     if i + 1 < len(sentences):
         window = min(transition, (sentences[i+1]['start'] - sentences[i]['start']) * .45)
@@ -167,9 +175,9 @@ def build_scene(folder: Path, sentences, style):
     return manifest
 
 
-def render_frame(bg, sprites, geo, sentences, style, t, scale=1., glyphs=None, duration=None):
+def render_frame(bg, sprites, geo, sentences, style, t, scale=1., glyphs=None, duration=None, single=False):
     frame = bg.copy()
-    for item in motion(sentences, t, style['transition'], duration):
+    for item in motion(sentences, t, style['transition'], duration, single):
         original = sprites[item['index']]
         factor = item['scale']*scale
         left = geo['x']*scale-original.width*factor/2
@@ -188,22 +196,35 @@ def render_frame(bg, sprites, geo, sentences, style, t, scale=1., glyphs=None, d
     return frame
 
 
-def render_video(folder, audio, sentences, style, duration, output, preview, progress, cancelled):
+def render_video(folder, audio, sentences, style, duration, output, preview, progress, cancelled, background_video=None):
     manifest = build_scene(folder, sentences, style)
     scene = folder/'scenes'/manifest['digest']
     scale = 1/3 if preview else 1
     width, height, fps = round(WIDTH*scale), round(HEIGHT*scale), 30
     bg = Image.open(scene/'background.jpg').convert('RGB').resize((width,height), Image.Resampling.LANCZOS)
     sprites = [Image.open(scene/s['file']).convert('RGBA') for s in manifest['sprites']]
-    total = math.ceil(duration*fps)
+    from .video import probe
+    output_duration = probe(background_video, duration)['duration'] if background_video else duration
+    total = math.ceil(output_duration*fps)
     cmd = [binary('ffmpeg'), '-nostdin', '-y', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', f'{width}x{height}', '-r', str(fps), '-i', '-', '-i', str(audio), '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19' if not preview else '24', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-t', str(duration), '-movflags', '+faststart', str(output)]
+    cmd[cmd.index('-t')+1] = str(output_duration)
+    if background_video:
+        cmd[cmd.index('-t'):cmd.index('-t')] = ['-af', 'apad']
+        cmd[cmd.index('-pix_fmt', cmd.index('libx264')):cmd.index('-pix_fmt', cmd.index('libx264'))] = ['-maxrate', str(min(8000, int(800000/output_duration)))+'k', '-bufsize', str(min(16000, int(1600000/output_duration)))+'k']
+    decoder = None
     with (output.parent/'ffmpeg.log').open('wb') as log:
+        if background_video:
+            decoder = subprocess.Popen([binary('ffmpeg'), '-nostdin', '-v', 'error', '-i', str(background_video), '-an', '-vf', f'scale={width}:{height},fps={fps},tpad=stop_mode=clone:stop_duration=0.1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], stdout=subprocess.PIPE, stderr=log)
         process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log)
         try:
             for n in range(total):
                 if cancelled():
                     raise RuntimeError('İşlem iptal edildi.')
-                frame = render_frame(bg, sprites, manifest['geometry'], sentences, style, n/fps, scale, [s['glyphs'] for s in manifest['sprites']], duration)
+                if decoder:
+                    raw = decoder.stdout.read(width*height*3)
+                    if len(raw) != width*height*3: raise RuntimeError('Arka plan videosunun tüm kareleri okunamadı.')
+                    bg = Image.frombytes('RGB', (width,height), raw).point(lambda p: round(p*.65))
+                frame = render_frame(bg, sprites, manifest['geometry'], sentences, style, n/fps, scale, [s['glyphs'] for s in manifest['sprites']], duration, bool(background_video))
                 process.stdin.write(frame.tobytes())
                 if n % 15 == 0:
                     progress(.02+.94*n/total, f'{n}/{total} kare oluşturuldu')
@@ -216,4 +237,9 @@ def render_video(folder, audio, sentences, style, duration, output, preview, pro
             process.wait()
             output.unlink(missing_ok=True)
             raise
+        finally:
+            if decoder:
+                decoder.stdout.close()
+                if decoder.poll() is None: decoder.kill()
+                decoder.wait()
     progress(1, 'MP4 hazır.')

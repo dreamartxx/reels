@@ -11,7 +11,7 @@ import httpx
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from backend import audio, alignment, render
+from backend import audio, alignment, render, video
 from backend.models import Edit, AlignmentRequest
 from backend.text import clean_text,srt
 
@@ -65,6 +65,13 @@ class Worker:
                 progress(.2,'Ses dosyası analiz ediliyor…')
                 peaks=audio.prepare(path,folder/'alignment.wav')
                 result={'audio':{**meta,'waveform':peaks}}
+            elif j['kind']=='background':
+                folder=self.cache/p['id']/'backgrounds'/payload['id'];folder.mkdir(parents=True,exist_ok=True)
+                path=folder/'source'
+                self.download('/api/worker/jobs/'+jid+'/source',path,video.MAX_BYTES)
+                result=video.prepare(path,folder/'video.mp4',p['audio']['duration'],progress,cancelled.is_set)
+                archive=folder/(jid+'.zip')
+                with zipfile.ZipFile(archive,'w',zipfile.ZIP_STORED) as z:z.write(folder/'video.mp4','video.mp4')
             elif j['kind']=='align':
                 req=AlignmentRequest.model_validate(payload);folder,path=self.source(p)
                 if not (folder/'alignment.wav').exists():audio.prepare(path,folder/'alignment.wav')
@@ -83,8 +90,13 @@ class Worker:
                 edit=Edit.model_validate(payload);folder,path=self.source(p);out=folder/'exports'/jid;out.mkdir(parents=True,exist_ok=True)
                 sentences=[s.model_dump() for s in edit.sentences]
                 if not sentences or sentences[-1]['end']>p['audio']['duration']+.001:raise ValueError('Geçersiz cümle zamanları.')
-                render.render_video(folder,path,sentences,edit.style.model_dump(),p['audio']['duration'],out/'video.mp4',payload.get('quality')=='preview',progress,cancelled.is_set)
+                bg=p.get('background');bg_path=None
+                if bg:
+                    bg_path=folder/'backgrounds'/bg['id']/'video.mp4'
+                    if not bg_path.exists():self.download('/api/projects/'+p['id']+'/backgrounds/'+bg['id'],bg_path,128*1024*1024)
+                render.render_video(folder,path,sentences,edit.style.model_dump(),p['audio']['duration'],out/'video.mp4',payload.get('quality')=='preview',progress,cancelled.is_set,bg_path)
                 timing=edit.model_dump();timing.update(duration=p['audio']['duration'],alignment=p.get('alignment'))
+                timing.update(background=bg,video_duration=bg['duration'] if bg else p['audio']['duration'])
                 for i,s in enumerate(timing['sentences']):
                     next_start=sentences[i+1]['start'] if i+1<len(sentences) else p['audio']['duration']
                     s.update(pause_after=max(0,next_start-s['end']),display_start=0 if i==0 else s['start'],display_end=next_start)
@@ -112,6 +124,20 @@ class Worker:
         finally:
             done.set();thread.join(timeout=2)
             if archive:archive.unlink(missing_ok=True)
+    def download(self,url,path,limit):
+        path.parent.mkdir(parents=True,exist_ok=True)
+        temp=path.with_suffix('.download')
+        try:
+            with self.client.stream('GET',url) as response:
+                response.raise_for_status();size=0
+                with temp.open('wb') as out:
+                    for chunk in response.iter_bytes():
+                        size+=len(chunk)
+                        if size>limit:raise ValueError('Video dosyası boyut sınırını aşıyor.')
+                        out.write(chunk)
+            temp.replace(path)
+        finally:temp.unlink(missing_ok=True)
+
     def run(self,once=False):
         print('Reels motoru bağlandı:',self.url,flush=True)
         while True:

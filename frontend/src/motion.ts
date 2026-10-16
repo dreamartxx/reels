@@ -1,8 +1,16 @@
 /** Same normalized choreography as backend/render.py; verified by cross-language tests. */
-export function motion(sentences:{start:number}[],t:number,transition:number,duration?:number){
+export function motion(sentences:{start:number}[],t:number,transition:number,duration?:number,single=false){
  if(!sentences.length)return [];
  const next = sentences.findIndex(s=>s.start>t);
  const i = Math.max(0,next===-1?sentences.length-1:next-1);
+ if(single){
+  const end=i+1<sentences.length?sentences[i+1].start:duration;
+  if(end===undefined||t>=end)return [];
+  const start=i===0?0:sentences[i].start,fade=Math.min(Math.max(.6,transition),(end-start)*.4);
+  const phase=Math.max(0,Math.min(1,(t-end+fade)/Math.max(.01,fade)));
+  const opacity=Math.max(0,Math.min(1,(t-start)/Math.min(.3,Math.max(.01,(end-start)*.2))));
+  return [{index:i,offset:0,opacity,scale:1,dissolve:phase}];
+ }
  let u=0;
  if(i+1<sentences.length){const duration=Math.min(transition,(sentences[i+1].start-sentences[i].start)*.45);if(duration>0){const x=Math.max(0,Math.min(1,(t-sentences[i+1].start+duration)/duration));u=x*x*(3-2*x)}}
  const items = [

@@ -125,6 +125,10 @@ try{
  if(str_starts_with($path,'/worker/')){
   if(!$worker)fail('Video motoru anahtarı geçersiz.',403);
   meta('worker_seen',(string)time());
+  if(preg_match('#^/worker/jobs/([a-f0-9]{32})/source$#D',$path,$m)&&$method==='GET'){
+   $r=getJob($m[1]);if($r['kind']!=='background')fail('Video bulunamadı.',404);
+   $payload=json_decode($r['payload'],true);fileResponse(dirFor($r['project_id']).'/backgrounds/'.$payload['id'].'/source','application/octet-stream');
+  }
   if($path==='/worker/claim'&&$method==='POST'){
    q("UPDATE reels_jobs SET status='queued',lease=NULL,message='Motor bağlantısı kesildi; yeniden sırada.' WHERE status='running' AND heartbeat<?",[time()-120]);
    $db->beginTransaction();$r=q("SELECT * FROM reels_jobs WHERE status='queued' AND cancelled=0 ORDER BY CASE kind WHEN 'ingest' THEN 0 WHEN 'scene' THEN 1 ELSE 2 END,created_at LIMIT 1")->fetch();
@@ -143,6 +147,11 @@ try{
    if($r['kind']==='ingest'){
     if(!is_numeric($result['audio']['duration']??null)||$result['audio']['duration']<.2||$result['audio']['duration']>600)fail('Ses süresi geçersiz.',422);
     $p['audio']=array_merge($p['audio'],$result['audio']);$p['audio']['file']=$payload['audio_file'];$result=saveProject($p);
+   }elseif($r['kind']==='background'){
+    $duration=$result['duration']??0;
+    if(!is_numeric($duration)||!is_finite((float)$duration)||$duration+.001<$p['audio']['duration']||$duration>600||($result['width']??0)!==1080||($result['height']??0)!==1920)fail('Video süresi veya boyutu geçersiz.',422);
+    $dir=dirFor($p['id']).'/backgrounds/'.$payload['id'];archiveUpload($dir,['video.mp4'],128*1024*1024);
+    $p['background']=['id'=>$payload['id'],'filename'=>$payload['filename'],'duration'=>(float)$duration,'width'=>1080,'height'=>1920];$result=saveProject($p);
    }elseif($r['kind']==='align'){
     $p['sentences']=$result['sentences'];$p['text']=$result['text'];$p['alignment']=$result['alignment'];validateEdit($p,$p);$result=saveProject($p);
    }elseif($r['kind']==='scene'){
@@ -174,6 +183,21 @@ try{
   if($action===''&&$method==='GET')reply($p);
   if($action===''&&$method==='PUT'){reply(saveProject(array_merge($p,validateEdit(body(),$p))));}
   if($action==='audio')fileResponse(dirFor($pid).'/'.$p['audio']['file'],str_ends_with($p['audio']['file'],'.mp3')?'audio/mpeg':'audio/wav');
+  if($action==='background'&&$method==='POST'){
+   if($p['audio']['duration']<=0)fail('Önce ses analizinin bitmesini bekleyin.',422);
+   $f=$_FILES['file']??null;if(!$f||$f['error']!==UPLOAD_ERR_OK)fail('Video yüklenemedi. En fazla 100 MB MP4 veya MOV yükleyin.',422);
+   if(!in_array(strtolower(pathinfo($f['name'],PATHINFO_EXTENSION)),['mp4','mov'],true)||$f['size']>100*1024*1024)fail('En fazla 100 MB MP4 veya MOV yükleyin.',422);
+   $mime=(new finfo(FILEINFO_MIME_TYPE))->file($f['tmp_name']);if(!in_array($mime,['video/mp4','video/quicktime','application/octet-stream'],true))fail('Geçersiz video dosyası.',422);
+   $bid=uid();$dir=dirFor($pid).'/backgrounds/'.$bid;mkdir($dir,0700,true);
+   if(!move_uploaded_file($f['tmp_name'],$dir.'/source'))fail('Video saklanamadı.',500);
+   reply(enqueue($pid,'background',['id'=>$bid,'filename'=>mb_substr(basename($f['name']),0,240)]));
+  }
+  if($action==='background'&&$method==='DELETE'){
+   $db->beginTransaction();q('UPDATE reels_projects SET updated_at=updated_at WHERE id=?',[$pid]);
+   if(q("SELECT id FROM reels_jobs WHERE project_id=? AND kind<>'scene' AND status IN ('queued','running')",[$pid])->fetch()){$db->rollBack();fail('Önce devam eden işlemi bekleyin.',409);}
+   $p=project($pid);$p['background']=null;$p=saveProject($p);$db->commit();reply($p);
+  }
+  if(preg_match('#^backgrounds/([a-f0-9]{32})$#D',$action,$b))fileResponse(dirFor($pid).'/backgrounds/'.$b[1].'/video.mp4','video/mp4');
   if($action==='jobs')reply(array_map('jobRecord',q("SELECT * FROM reels_jobs WHERE project_id=? AND status IN ('queued','running') AND kind<>'scene' ORDER BY created_at",[$pid])->fetchAll()));
   if($action==='align'&&$method==='POST'){$e=body();splitText((string)($e['text']??''),$e['mode']??'sentences');if(!in_array($e['model']??'base',['tiny','base','small','medium'],true)||!in_array($e['device']??'cpu',['cpu','cuda'],true))fail('Model seçimi geçersiz.',422);reply(enqueue($pid,'align',$e));}
   if($action==='manual'&&$method==='POST'){

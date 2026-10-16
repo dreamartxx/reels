@@ -1,9 +1,9 @@
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useRef,useState,RefObject} from 'react';
 import {Expand,ShieldCheck} from 'lucide-react';
 import {api,editBody,Project,Scene,Style,Job} from './types';
 import {motion,letterMotion} from './motion';
 
-export function Preview({project,style,time,guides,onError}:{project:Project|null;style:Style;time:number;guides:boolean;onError:(s:string)=>void}){
+export function Preview({project,style,time,guides,onError,videoRef,onVideoPlay,onVideoPause,onVideoEnd}:{videoRef:RefObject<HTMLVideoElement|null>;onVideoPlay:()=>void;onVideoPause:()=>void;onVideoEnd:()=>void;project:Project|null;style:Style;time:number;guides:boolean;onError:(s:string)=>void}){
  const canvas=useRef<HTMLCanvasElement>(null);
  const [assets,setAssets]=useState<{scene:Scene;images:HTMLImageElement[];bg:HTMLImageElement;pid:string}|null>(null);
  const [loading,setLoading]=useState(false);
@@ -52,10 +52,10 @@ export function Preview({project,style,time,guides,onError}:{project:Project|nul
   const c=canvas.current;if(!c)return;const ctx=c.getContext('2d');if(!ctx)return;
   const ratio=c.width/1080;
   ctx.setTransform(ratio,0,0,ratio,0,0);ctx.globalAlpha=1;
-  ctx.fillStyle=style.background;ctx.fillRect(0,0,1080,1920);
+  ctx.clearRect(0,0,1080,1920);ctx.fillStyle=project?.background?'rgba(0,0,0,.35)':style.background;ctx.fillRect(0,0,1080,1920);
   if(assets&&assets.pid===project?.id){
-   ctx.drawImage(assets.bg,0,0,1080,1920);
-   for(const item of motion(project.sentences,time,style.transition,project.audio.duration)){
+   if(!project?.background)ctx.drawImage(assets.bg,0,0,1080,1920);
+   for(const item of motion(project.sentences,time,style.transition,project.audio.duration,!!project.background)){
     const im=assets.images[item.index];if(!im)continue;
     const geo=assets.scene.geometry;
     ctx.globalAlpha=item.opacity;
@@ -76,12 +76,13 @@ export function Preview({project,style,time,guides,onError}:{project:Project|nul
   }
   if(guides){ctx.globalAlpha=.45;ctx.strokeStyle=style.accent;ctx.lineWidth=2;ctx.setLineDash([12,12]);ctx.strokeRect(style.safe_left,style.safe_top,1080-style.safe_left-style.safe_right,1920-style.safe_top-style.safe_bottom);ctx.setLineDash([])}
   ctx.globalAlpha=1;
- },[assets,time,project?.sentences,style,guides]);
+ },[assets,time,project?.sentences,style,guides,project?.background?.id]);
  return <div className="preview-frame" style={{background:style.background}}>
+  {project?.background&&<video ref={videoRef} className="background-video" key={project.background.id} src={`/api/projects/${project.id}/backgrounds/${project.background.id}`} muted playsInline preload="auto" onPlay={onVideoPlay} onPause={onVideoPause} onEnded={onVideoEnd} onError={()=>onError('Arka plan videosu oynatılamadı. Videoyu yeniden yükleyin.')} aria-label="Doğa videosu arka planı"/>}
   <canvas ref={canvas} width={540} height={960} aria-label="Sesle eş zamanlı 9:16 video önizlemesi"/>
   {!project?.sentences.length&&<span className="sample-label">TASARIM ÖNİZLEMESİ</span>}
   {loading&&<span className="preview-loading">Tipografi hazırlanıyor…</span>}
-  <button className="fullscreen icon" title="Önizlemeyi büyüt" onClick={()=>canvas.current?.requestFullscreen().catch(e=>onError(e.message))}><Expand size={16}/></button>
+  <button className="fullscreen icon" title="Önizlemeyi büyüt" onClick={()=>canvas.current?.parentElement?.requestFullscreen().catch(e=>onError(e.message))}><Expand size={16}/></button>
   {guides&&<span className="safe-label"><ShieldCheck size={12}/> Reels güvenli alanı</span>}
  </div>
 }

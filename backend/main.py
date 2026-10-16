@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from . import audio, alignment, render
+from . import audio, alignment, render, video
 from .downloads import download_name
 from .models import AlignmentRequest, Edit, ExportRequest, Style
 from .text import clean_text, split_poem, srt
@@ -170,6 +170,55 @@ def start_alignment(pid: str, req: AlignmentRequest):
     return job(pid, 'align', task)
 
 
+@app.post('/api/projects/{pid}/background')
+def upload_background(pid: str, file: UploadFile = File(...)):
+    p = read_project(pid)
+    if Path(file.filename or '').suffix.lower() not in ('.mp4', '.mov'):
+        raise HTTPException(422, 'MP4 veya MOV video yükleyin.')
+    bid = uuid.uuid4().hex
+    target = folder(pid)/'backgrounds'/bid
+    target.mkdir(parents=True)
+    source = target/'source'
+    try:
+        size = 0
+        with source.open('wb') as out:
+            while chunk := file.file.read(1024*1024):
+                size += len(chunk)
+                if size > video.MAX_BYTES: raise ValueError('Video en fazla 100 MB olabilir.')
+                out.write(chunk)
+        video.probe(source, p['audio']['duration'])
+        def task(jid, progress, cancelled):
+            meta = video.prepare(source, target/'video.mp4', p['audio']['duration'], progress, cancelled)
+            current = read_project(pid)
+            current['background'] = {**meta, 'id':bid, 'filename':file.filename}
+            write_project(folder(pid), current)
+            source.unlink(missing_ok=True)
+            return current
+        return job(pid, 'background', task)
+    except Exception as e:
+        shutil.rmtree(target, ignore_errors=True)
+        if isinstance(e, HTTPException): raise
+        raise HTTPException(422, str(e)) from e
+    finally:
+        file.file.close()
+
+
+@app.delete('/api/projects/{pid}/background')
+def remove_background(pid: str):
+    if project_jobs(pid): raise HTTPException(409, 'Önce devam eden işlemi bekleyin.')
+    p = read_project(pid); p['background'] = None
+    write_project(folder(pid), p)
+    return p
+
+
+@app.get('/api/projects/{pid}/backgrounds/{bid}')
+def get_background(pid: str, bid: str):
+    if not re.fullmatch(r'[a-f0-9]{32}', bid): raise HTTPException(404)
+    path = folder(pid)/'backgrounds'/bid/'video.mp4'
+    if not path.is_file(): raise HTTPException(404)
+    return FileResponse(path, media_type='video/mp4')
+
+
 @app.post('/api/projects/{pid}/manual')
 def manual(pid: str, req: AlignmentRequest):
     p = read_project(pid)
@@ -221,8 +270,10 @@ def export(pid: str, req: ExportRequest):
     def task(jid, progress, cancelled):
         out = folder(pid)/'exports'/jid
         out.mkdir(parents=True)
-        render.render_video(folder(pid), folder(pid)/p['audio']['file'], snapshot['sentences'], snapshot['style'], p['audio']['duration'], out/'video.mp4', req.quality=='preview', progress, cancelled)
+        bg = p.get('background')
+        render.render_video(folder(pid), folder(pid)/p['audio']['file'], snapshot['sentences'], snapshot['style'], p['audio']['duration'], out/'video.mp4', req.quality=='preview', progress, cancelled, folder(pid)/'backgrounds'/bg['id']/'video.mp4' if bg else None)
         timing = {**snapshot, 'duration':p['audio']['duration'], 'alignment':p.get('alignment'), 'sentences':[]}
+        timing.update(background=bg, video_duration=bg['duration'] if bg else p['audio']['duration'])
         for i, s in enumerate(snapshot['sentences']):
             next_start = snapshot['sentences'][i+1]['start'] if i+1 < len(snapshot['sentences']) else p['audio']['duration']
             timing['sentences'].append({**s, 'pause_after':max(0,next_start-s['end']), 'display_start':0 if i==0 else s['start'], 'display_end':next_start})

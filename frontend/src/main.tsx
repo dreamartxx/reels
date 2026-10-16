@@ -16,11 +16,12 @@ function App(){
  const [tab,setTab]=useState<'design'|'sentence'>('design'),[mode,setMode]=useState('sentences'),[model,setModel]=useState('base'),[device,setDevice]=useState('cpu');
  const [showProjects,setShowProjects]=useState(false),[projects,setProjects]=useState<{id:string;name:string;duration:number}[]>([]),[files,setFiles]=useState<Record<string,string>|null>(null),[quality,setQuality]=useState('final');
  const [health,setHealth]=useState<{ffmpeg:boolean;ffprobe:boolean;alignment:boolean;models:string[];mode?:string;worker_online?:boolean}|null>(null);
+ const videoRef=useRef<HTMLVideoElement>(null),videoInputRef=useRef<HTMLInputElement>(null);
  const audioRef=useRef<HTMLAudioElement>(null),inputRef=useRef<HTMLInputElement>(null),latest=useRef(project),lastSaved=useRef(''),saveSequence=useRef(0);
  const locked=busy||!!job&&['running','queued'].includes(job.status);
  latest.current=project;
  const report=useCallback((s:string)=>setError(s),[]);
- function apply(p:Project){if(p.alignment?.model)setModel(p.alignment.model);setProject(p);setText(p.text);setStyle(p.style);setSelected(p.sentences[0]?.id||null);setTime(0);setPlaying(false);lastSaved.current=JSON.stringify(editBody(p));setSaved('Kaydedildi');localStorage.setItem('reels-project',p.id)}
+ function apply(p:Project){audioRef.current?.pause();videoRef.current?.pause();if(audioRef.current)audioRef.current.currentTime=0;if(videoRef.current)videoRef.current.currentTime=0;if(p.alignment?.model)setModel(p.alignment.model);setProject(p);setText(p.text);setStyle(p.style);setSelected(p.sentences[0]?.id||null);setTime(0);setPlaying(false);lastSaved.current=JSON.stringify(editBody(p));setSaved('Kaydedildi');localStorage.setItem('reels-project',p.id)}
  async function open(id:string){try{const p=await api<Project>('/projects/'+id);apply(p);setShowProjects(false);setFiles(null);const history=await api<{files:Record<string,string>}[]>(`/projects/${id}/exports`);if(history.length)setFiles(history[0].files);const active=await api<Job[]>(`/projects/${id}/jobs`);setJob(active[0]||null)}catch(e){report((e as Error).message)}}
  useEffect(()=>{api<typeof health>('/health').then(setHealth).catch(()=>setError('Yerel sunucuya bağlanılamadı. README içindeki başlatma adımlarını izleyin.'));const id=localStorage.getItem('reels-project');if(id)void open(id)},[]);
  useEffect(()=>{if(health?.mode!=='cloud')return;const timer=setInterval(()=>api<typeof health>('/health').then(setHealth).catch(()=>{}),15000);return()=>clearInterval(timer)},[health?.mode]);
@@ -36,7 +37,7 @@ function App(){
   if(!job||!['running','queued'].includes(job.status))return;
   let active=true,hadConnectionError=false;let timer:ReturnType<typeof setTimeout>;
   async function poll(){try{const updated=await api<Job>('/jobs/'+job!.id);if(!active)return;if(hadConnectionError){setError('');hadConnectionError=false;}setJob(updated);
-   if(updated.status==='completed'){if(updated.kind==='align'||updated.kind==='ingest'){apply(updated.result as Project);setNotice(updated.kind==='ingest'?'Ses analizi tamamlandı. Şimdi şiiri sesle hizalayabilirsiniz.':'Hizalama tamamlandı. İşaretli kelimeleri dinleyerek kontrol edin.')}else{setFiles((updated.result as {files:Record<string,string>}).files);setNotice('Video ve altyazı dosyalarınız hazır.')}}
+   if(updated.status==='completed'){if(updated.kind==='align'||updated.kind==='ingest'||updated.kind==='background'){apply(updated.result as Project);setNotice(updated.kind==='background'?'Arka plan videosu hazır. Çıktı, videonun tamamını içerir.':updated.kind==='ingest'?'Ses analizi tamamlandı. Şimdi şiiri sesle hizalayabilirsiniz.':'Hizalama tamamlandı. İşaretli kelimeleri dinleyerek kontrol edin.')}else{setFiles((updated.result as {files:Record<string,string>}).files);setNotice('Video ve altyazı dosyalarınız hazır.')}}
    if(['failed','cancelled'].includes(updated.status))setError(updated.message);
    if(['completed','failed','cancelled'].includes(updated.status))return;
   }catch(e){if(active){hadConnectionError=true;setError((e as Error).message+' Bağlantı yeniden deneniyor; işiniz korunuyor.');}}
@@ -46,28 +47,37 @@ function App(){
   return()=>{active=false;clearTimeout(timer)};
  },[job?.id,job?.status]);
  useEffect(()=>{
-  let id=0;function tick(){if(audioRef.current)setTime(audioRef.current.currentTime);id=requestAnimationFrame(tick)}
+  let id=0;function tick(){const master=project?.background?videoRef.current:audioRef.current;if(master){setTime(master.currentTime);const a=audioRef.current;if(project?.background&&a){if(master.currentTime>=project.audio.duration)a.pause();else if(Math.abs(a.currentTime-master.currentTime)>.15)a.currentTime=master.currentTime;}}id=requestAnimationFrame(tick)}
   if(playing)id=requestAnimationFrame(tick);return()=>cancelAnimationFrame(id);
- },[playing]);
+ },[playing,project?.background?.id]);
  function updateStyle(patch:Partial<Style>){setStyle(prev=>({...prev,...patch}));setProject(p=>p?{...p,style:{...p.style,...patch}}:null)}
  function updateText(value:string){setText(value);setProject(p=>p?{...p,text:value}:null)}
  async function upload(file:File,example=false){
-  setError('');setBusy(true);audioRef.current?.pause();setFiles(null);setJob(null);
+  setError('');setBusy(true);audioRef.current?.pause();videoRef.current?.pause();setFiles(null);setJob(null);
   try{const form=new FormData();form.append('file',file);let p=await api<Project>('/projects',{method:'POST',body:form});p={...p,text:example?DEMO:text,style};p=await api<Project>('/projects/'+p.id,{method:'PUT',body:JSON.stringify(editBody(p))});apply(p);const active=await api<Job[]>(`/projects/${p.id}/jobs`);setJob(active[0]||null);setNotice(active.length?'Ses yüklendi. Video motoru ses dosyasını analiz ediyor…':'Ses hazır. Şiirinizi kontrol edip “Sesle hizala” düğmesine basın.')}
   catch(e){report((e as Error).message)}finally{setBusy(false)}
  }
+ async function uploadBackground(file:File){
+  if(!project||locked)return;
+  if(file.size>100*1024*1024){report('Video en fazla 100 MB olabilir.');return}
+  setBusy(true);setError('');audioRef.current?.pause();videoRef.current?.pause();
+  try{await api('/projects/'+project.id,{method:'PUT',body:JSON.stringify(editBody(project))});const form=new FormData();form.append('file',file);setJob(await api<Job>(`/projects/${project.id}/background`,{method:'POST',body:form}));setNotice('Video yükleniyor ve süresi kontrol ediliyor…')}
+  catch(e){report((e as Error).message)}finally{setBusy(false)}
+ }
+ async function removeBackground(){if(!project||locked)return;setBusy(true);setError('');try{await api('/projects/'+project.id,{method:'PUT',body:JSON.stringify(editBody(project))});apply(await api<Project>(`/projects/${project.id}/background`,{method:'DELETE'}));}catch(e){report((e as Error).message)}finally{setBusy(false)}}
  async function demo(){try{setBusy(true);const res=await fetch('/api/example/audio');if(!res.ok)throw Error('Örnek ses bulunamadı. Kendi MP3 dosyanızı yükleyin.');await upload(new File([await res.blob()],'Gece — Türkçe örnek.mp3',{type:'audio/mpeg'}),true)}catch(e){report((e as Error).message)}finally{setBusy(false)}}
- async function align(manual=false){if(!project||locked)return;setBusy(true);setError('');setFiles(null);audioRef.current?.pause();
+ async function align(manual=false){if(!project||locked)return;setBusy(true);setError('');setFiles(null);audioRef.current?.pause();videoRef.current?.pause();
   try{await api('/projects/'+project.id,{method:'PUT',body:JSON.stringify(editBody(project))});
    const result=await api<Project|Job>(`/projects/${project.id}/${manual?'manual':'align'}`,{method:'POST',body:JSON.stringify({text,mode,model,device})});
    if(manual){apply(result as Project);setNotice('Bu bir elle zamanlama taslağıdır. Hiçbir cümle otomatik hizalanmadı; tüm süreleri kontrol edin.')}else setJob(result as Job);
   }catch(e){report((e as Error).message)}finally{setBusy(false)}
  }
  async function save(){if(!project)return;try{const p=await api<Project>('/projects/'+project.id,{method:'PUT',body:JSON.stringify(editBody(project))});lastSaved.current=JSON.stringify(editBody(p));setSaved('Kaydedildi');setNotice(health?.mode==='cloud'?'Proje Hostinger veritabanına kaydedildi.':'Proje bu bilgisayara kaydedildi.')}catch(e){report((e as Error).message)}}
- async function exportVideo(){if(!project||locked)return;setBusy(true);setError('');setFiles(null);audioRef.current?.pause();try{await api('/projects/'+project.id,{method:'PUT',body:JSON.stringify(editBody(project))});setJob(await api<Job>(`/projects/${project.id}/export`,{method:'POST',body:JSON.stringify({...editBody(project),quality})}))}catch(e){report((e as Error).message)}finally{setBusy(false)}}
- function seek(t:number){if(audioRef.current){audioRef.current.currentTime=t;setTime(t)}}
- async function play(){const a=audioRef.current;if(!a)return;if(playing)a.pause();else{if(a.currentTime>=a.duration)a.currentTime=0;try{await a.play()}catch(e){report((e as Error).message)}}}
+ async function exportVideo(){if(!project||locked)return;setBusy(true);setError('');setFiles(null);audioRef.current?.pause();videoRef.current?.pause();try{await api('/projects/'+project.id,{method:'PUT',body:JSON.stringify(editBody(project))});setJob(await api<Job>(`/projects/${project.id}/export`,{method:'POST',body:JSON.stringify({...editBody(project),quality})}))}catch(e){report((e as Error).message)}finally{setBusy(false)}}
+ function seek(t:number){const a=audioRef.current;if(a&&project){a.currentTime=Math.min(t,project.audio.duration);if(project.background&&videoRef.current){videoRef.current.currentTime=t;if(playing&&t<project.audio.duration)void a.play().catch(e=>report(e.message));else if(t>=project.audio.duration)a.pause();}setTime(t)}}
+ async function play(){const a=audioRef.current,master=project?.background?videoRef.current:a;if(!a||!master||!project)return;if(playing){master.pause();a.pause()}else{if(master.currentTime>=master.duration)seek(0);try{await master.play();if(project.background&&master.currentTime<project.audio.duration){a.currentTime=master.currentTime;await a.play()}}catch(e){master.pause();a.pause();report((e as Error).message)}}}
  function changeSentences(sentences:Sentence[]){setProject(p=>p?{...p,sentences}:p)}
+ const playbackDuration=project?.background?.duration||project?.audio.duration||0;
  const sentence=project?.sentences.find(s=>s.id===selected);
  const reviewCount=project?.sentences.filter(s=>s.review).length||0;
  const textChanged=!!project?.sentences.length&&project.sentences.map(s=>s.text).join(' ').replace(/\s+/g,' ').trim()!==text.replace(/\[[^\]]*\]/g,'').replace(/\s+/g,' ').trim();
@@ -99,16 +109,21 @@ function App(){
     </div><div className="source-note"><span>01 — KELİMELERİNİZ</span><p>Sesinize dokunmadan.<br/>Hikâyenizi öne çıkararak.</p></div>
    </aside>
    <section className="preview-panel"><div className="preview-heading"><span><i className="dot green"/> CANLI ÖNİZLEME</span><button className={`ghost safe-toggle ${guides?'active':''}`} onClick={()=>setGuides(!guides)} title="Güvenli alanı göster"><ShieldCheck size={14}/>Güvenli alan</button></div>
-    <div className="preview-stage"><Preview project={project} style={style} time={time} guides={guides} onError={report}/><span className="frame-caption">DİKEY BİR HİKÂYE. KENDİ RİTMİNDE.</span></div>
-    <div className="playback"><button className="icon ghost" title="Başa dön" disabled={!project} onClick={()=>seek(0)}><SkipBack size={16}/></button><button className="play-button" title={playing?'Duraklat':'Oynat'} disabled={!project} onClick={play}>{playing?<Pause size={19} fill="currentColor"/>:<Play size={19} fill="currentColor"/>}</button><span className="time">{timeLabel(time)} <em>/ {timeLabel(project?.audio.duration||0)}</em></span><span className="playback-mode">{project?.alignment?.engine==='stable-ts'?'METNE HİZALI':project?.sentences.length?'ELLE ZAMANLAMA':'ÖNİZLEME'}</span></div>
-    <input className="scrubber" aria-label="Oynatma konumu" type="range" min="0" max={project?.audio.duration||1} step=".01" value={time} disabled={!project} onChange={e=>seek(Number(e.target.value))}/>
-    {project&&<audio ref={audioRef} src={`/api/projects/${project.id}/audio`} onPlay={()=>setPlaying(true)} onPause={()=>setPlaying(false)} onEnded={()=>{setPlaying(false);setTime(project.audio.duration)}} onTimeUpdate={e=>{if(!playing)setTime(e.currentTarget.currentTime)}} onError={()=>report('Ses oynatılamadı. Dosyayı yeniden yükleyin.')} preload="auto"/>}
+    <div className="preview-stage"><Preview project={project} style={style} time={time} guides={guides} onError={report} videoRef={videoRef} onVideoPlay={()=>setPlaying(true)} onVideoPause={()=>{setPlaying(false);audioRef.current?.pause()}} onVideoEnd={()=>{setPlaying(false);setTime(playbackDuration);audioRef.current?.pause()}}/><span className="frame-caption">DİKEY BİR HİKÂYE. KENDİ RİTMİNDE.</span></div>
+    <div className="playback"><button className="icon ghost" title="Başa dön" disabled={!project} onClick={()=>seek(0)}><SkipBack size={16}/></button><button className="play-button" title={playing?'Duraklat':'Oynat'} disabled={!project} onClick={play}>{playing?<Pause size={19} fill="currentColor"/>:<Play size={19} fill="currentColor"/>}</button><span className="time">{timeLabel(time)} <em>/ {timeLabel(playbackDuration)}</em></span><span className="playback-mode">{project?.alignment?.engine==='stable-ts'?'METNE HİZALI':project?.sentences.length?'ELLE ZAMANLAMA':'ÖNİZLEME'}</span></div>
+    <input className="scrubber" aria-label="Oynatma konumu" type="range" min="0" max={playbackDuration||1} step=".01" value={time} disabled={!project} onChange={e=>seek(Number(e.target.value))}/>
+    {project&&<audio ref={audioRef} src={`/api/projects/${project.id}/audio`} onPlay={()=>{if(!project.background)setPlaying(true)}} onPause={()=>{if(!project.background)setPlaying(false)}} onEnded={()=>{if(!project.background){setPlaying(false);setTime(project.audio.duration)}}} onTimeUpdate={e=>{if(!playing&&!project.background)setTime(e.currentTarget.currentTime)}} onError={()=>report('Ses oynatılamadı. Dosyayı yeniden yükleyin.')} preload="auto"/>}
    </section>
    <aside className="settings-panel panel"><div className="panel-heading"><span className="number">02</span><h2>Sahneyi tasarla</h2><Settings2 size={16}/></div>
     <div className="tabs"><button className={tab==='design'?'active':''} onClick={()=>setTab('design')}><SlidersHorizontal size={14}/>Tasarım</button><button className={tab==='sentence'?'active':''} onClick={()=>setTab('sentence')}><Type size={14}/>Cümle {reviewCount>0&&<i>{reviewCount}</i>}</button></div>
     <div className="settings-body">
     {tab==='sentence'&&project?.sentences.length?<select aria-label="Cümle seç" className="sentence-picker" value={selected||''} onChange={e=>setSelected(e.target.value)}>{project.sentences.map((s,i)=><option key={s.id} value={s.id}>{i+1}. {s.review?'⚠ ':''}{s.text}</option>)}</select>:null}
     {tab==='design'?<><label className="field-title">BİR ATMOSFER SEÇİN</label><div className="templates">{templates.map(t=><button key={t.id} disabled={locked} className={`template ${style.template===t.id?'selected':''}`} onClick={()=>updateStyle({template:t.id,font:t.font,background:t.bg,foreground:t.fg,accent:t.accent})}><span className="swatch" style={{background:t.bg,color:t.fg,fontFamily:t.font==='mono'?'Plex Mono':t.font==='sans'?'Manrope':'Lora'}}>{t.mark}{style.template===t.id&&<i><Check size={10}/></i>}</span><strong>{t.name}</strong></button>)}</div>
+     <div className="divider"/><label className="field-title">ARKA PLAN VİDEOSU</label>
+     <input ref={videoInputRef} type="file" accept=".mp4,.mov,video/mp4,video/quicktime" hidden onChange={e=>{const f=e.target.files?.[0];if(f)void uploadBackground(f);e.target.value=''}}/>
+     <button className="secondary wide" disabled={!project||locked} onClick={()=>videoInputRef.current?.click()}><Film size={15}/>{project?.background?'Videoyu değiştir':'Video yükle'}</button>
+     {project?.background&&<div className="background-info"><strong>{project.background.filename}</strong><span>{timeLabel(project.background.duration)} · 9:16</span><button className="ghost" disabled={locked} onClick={removeBackground}><X size={12}/>Videoyu kaldır</button></div>}
+     <p className="video-help">9:16 MP4 / MOV · En fazla 100 MB. {project?`En az ${timeLabel(project.audio.duration)} uzunluğunda video yükleyin.`:'Önce ses dosyanızı yükleyin.'} Video kesilmez; ses bittiğinde yazılar kaybolur. Videonun kendi sesi kapalıdır.</p>
      <div className="divider"/><label className="field-title" htmlFor="font">TİPOGRAFİ</label><select id="font" disabled={locked} value={style.font} onChange={e=>updateStyle({font:e.target.value as Style['font']})}><option value="serif">Lora — Editorial serif</option><option value="sans">Manrope — Modern sans</option><option value="mono">IBM Plex Mono — Daktilo</option></select>
      <Range label="Yazı boyutu" value={style.font_size} min={30} max={130} suffix=" px" disabled={locked} onChange={font_size=>updateStyle({font_size})}/>
      <Range label="Satır aralığı" value={style.line_height} min={1} max={1.7} step={.05} suffix="×" disabled={locked} onChange={line_height=>updateStyle({line_height})}/>

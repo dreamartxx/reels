@@ -37,6 +37,12 @@ Tarayıcı adresi: **http://127.0.0.1:8765**. Sunucu açık kalmalıdır. Durdur
 - Hızlı prova: 360 × 640, 30 FPS. SRT ve JSON zamanlama dosyaları her çıktıya eşlik eder.
 - Otomatik yerel proje kaydı, yeniden açma, son kullanılan tasarım ayarları, ilerleme ve iptal. Açık sunucudaki işler sayfa yenilendiğinde yeniden izlenir.
 
+## Doğa videosu arka planı
+
+Önce ses dosyasını, ardından **Sahneyi tasarla → Arka plan videosu → Video yükle** alanından kendi 9:16 MP4/MOV videonuzu yükleyin (en fazla 100 MB ve 10 dakika). Motor görüntüyü doğrular ve tarayıcıyla uyumlu MP4 hazırlar. Video seslendirmeden kısa olamaz; mevcut arka plan, yeni video başarıyla hazırlanırsа değişir.
+
+Çıktı yüklenen videonun tamamını içerir; ses bittiğinde kesilmez veya döngüye girmez. Ses bittikten sonra yazılar kaybolur ve kalan bölüm sessiz devam eder. Arka plan videosunun kendi sesi kullanılmaz. Video modunda aynı anda tek cümle gösterilir; harflerin dağılma hareketi, yüzde 35 koyulaştırma ve oynatma konumu önizleme ile çıktıda eşleşir. **Videoyu kaldır** seçeneği düz arka plana döner. JSON içinde `duration` ses süresidir; `video_duration` çıktı süresini, `background` kullanılan arka planı belirtir.
+
 ## Kurulum — macOS
 
 Önerilen ortam: Python **3.11 veya 3.12**, Node.js **22+**, FFmpeg/ffprobe. Python 3.14 için PyTorch/Whisper uyumluluğu kuruluma göre değişebilir; 3.11 ile test edilmiştir.

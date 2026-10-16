@@ -1,7 +1,7 @@
 export type Word = {text:string;start:number;end:number;confidence:number|null;review:boolean};
 export type Sentence = {id:string;text:string;start:number;end:number;review:boolean;reason:string;accent:boolean;words:Word[]};
 export type Style = {template:'dark'|'gold'|'paper'|'typewriter';font:'serif'|'sans'|'mono';background:string;foreground:string;accent:string;font_size:number;line_height:number;transition:number;position:number;safe_top:number;safe_bottom:number;safe_left:number;safe_right:number;grain:number};
-export type Project = {id:string;name:string;text:string;style:Style;sentences:Sentence[];audio:{duration:number;filename:string;sample_rate:number;channels:number;waveform:number[]};alignment:null|{engine:string;model?:string}};
+export type Project = {id:string;name:string;text:string;style:Style;sentences:Sentence[];audio:{duration:number;filename:string;sample_rate:number;channels:number;waveform:number[]};background?:null|{id:string;filename:string;duration:number;width:number;height:number};alignment:null|{engine:string;model?:string}};
 export type Job = {id:string;kind:string;status:string;progress:number;message:string;result?:Project|{files:Record<string,string>}};
 export type Scene = {digest:string;width:number;height:number;geometry:{x:number;y:number;gap:number;width:number;max_height:number};sprites:{file:string;width:number;height:number;font_size:number;glyphs?:{x:number;y:number;width:number;height:number}[]}[]};
 export const defaultStyle:Style = {template:'dark',font:'serif',background:'#151719',foreground:'#F1E9D6',accent:'#D6AF70',font_size:78,line_height:1.25,transition:.6,position:0,safe_top:220,safe_bottom:340,safe_left:100,safe_right:160,grain:.025};
