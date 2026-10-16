@@ -5,14 +5,15 @@ import {Project,Sentence,timeLabel} from './types';
 export function Timeline({project,time,selected,onSelect,onSeek,onChange,disabled}:{project:Project|null;time:number;selected:string|null;onSelect:(id:string)=>void;onSeek:(t:number)=>void;onChange:(s:Sentence[])=>void;disabled:boolean}){
  const [zoom,setZoom]=useState(1);
  const track=useRef<HTMLDivElement>(null);
- const duration=project?.audio.duration||20;
+ const audioDuration=project?.audio.duration||20;
+ const duration=project?.background?.duration||audioDuration;
  const drag=useRef<{id:string;kind:string;x:number;start:number;end:number;original:Sentence[]}|null>(null);
  function seek(e:React.PointerEvent){if(!track.current||!project)return;const r=track.current.getBoundingClientRect();onSeek(Math.max(0,Math.min(duration,(e.clientX-r.left)/r.width*duration)))}
  function begin(e:React.PointerEvent,s:Sentence,kind:string){e.stopPropagation();onSelect(s.id);if(disabled||!project)return;e.currentTarget.setPointerCapture(e.pointerId);drag.current={id:s.id,kind,x:e.clientX,start:s.start,end:s.end,original:project.sentences}}
  function move(e:React.PointerEvent){
   const d=drag.current;if(!d||!track.current)return;
   const delta=(e.clientX-d.x)/track.current.getBoundingClientRect().width*duration;
-  const idx=d.original.findIndex(s=>s.id===d.id),min=idx?d.original[idx-1].end:0,max=idx+1<d.original.length?d.original[idx+1].start:duration;
+  const idx=d.original.findIndex(s=>s.id===d.id),min=idx?d.original[idx-1].end:0,max=idx+1<d.original.length?d.original[idx+1].start:audioDuration;
   let start=d.start,end=d.end;
   if(d.kind==='move'){start=Math.max(min,Math.min(max-(d.end-d.start),d.start+delta));end=start+d.end-d.start}
   else if(d.kind==='start')start=Math.max(min,Math.min(d.end-.04,d.start+delta));
@@ -24,7 +25,7 @@ export function Timeline({project,time,selected,onSelect,onSeek,onChange,disable
   <div className="timeline-scroll"><div className="timeline-track" ref={track} style={{width:`${zoom*100}%`}}>
    <div className="ruler" onPointerDown={seek}>{Array.from({length:9},(_,i)=><span key={i} style={{left:`${i/8*100}%`}}>{timeLabel(duration*i/8)}</span>)}</div>
    <div className="waveform" onPointerDown={seek}>
-    <svg viewBox="0 0 1600 64" preserveAspectRatio="none" role="img" aria-label="Ses dalga formu"><path d={(project?.audio.waveform||Array.from({length:400},()=>.03)).map((v,i,a)=>`M${i/a.length*1600},${32-v*28}v${Math.max(1,v*56)}`).join(' ')} stroke="currentColor" strokeWidth="1.1"/></svg>
+    <svg style={{width:`${audioDuration/duration*100}%`}} viewBox="0 0 1600 64" preserveAspectRatio="none" role="img" aria-label="Ses dalga formu"><path d={(project?.audio.waveform||Array.from({length:400},()=>.03)).map((v,i,a)=>`M${i/a.length*1600},${32-v*28}v${Math.max(1,v*56)}`).join(' ')} stroke="currentColor" strokeWidth="1.1"/></svg>
     <span className="wave-name">{project?.audio.filename||'Ses dosyanız burada görünecek'}</span>
    </div>
    <div className="sentence-lane" onPointerDown={seek}>
