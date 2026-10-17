@@ -1,3 +1,3 @@
 #!/bin/zsh
 cd "$(dirname "$0")"
-.venv/bin/python cloud/worker.py
+.venv/bin/python scripts/worker_service.py install

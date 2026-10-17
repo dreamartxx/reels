@@ -45,3 +45,13 @@ domain-root/
 ## VPS'e geçiş
 
 PHP/MySQL katmanı aynı kalabilir; Python işçisi VPS üzerinde çalıştırılır. Böylece kişisel bilgisayar açık olmasa da işler üretilir. VPS satın alımı veya ücretli hizmet bu kurulumun parçası değildir.
+
+### Mac'te otomatik video motoru
+
+`Bulut Motorunu Aç.command` artık motoru macOS kullanıcı servisi olarak kurar ve arka planda başlatır. Terminali açık tutmanız gerekmez. Mac oturum açılışında motor yeniden başlar; beklenmedik kapanmadan sonra macOS tekrar başlatır. Bilgisayar uyurken veya kapalıyken işler sırada bekler. İnternet geri geldiğinde motor tekrar bağlanır.
+
+Durum: `.venv/bin/python scripts/worker_service.py status`
+
+Otomatik başlatmayı kapatmak için: `.venv/bin/python scripts/worker_service.py uninstall` (devam eden işlemi durdurur; proje/çıktıları silmez).
+
+Servis tanımı `~/Library/LaunchAgents/com.reels.typography.worker.plist`, günlükler proje içindeki `.private/logs/` klasöründedir. Parolalar ve motor anahtarı servise kopyalanmaz; mevcut özel yapılandırmadan okunur. macOS kullanıcı hesabıyla çalışır; yönetici yetkisi gerekmez.
